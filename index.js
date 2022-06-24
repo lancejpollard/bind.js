@@ -1,11 +1,14 @@
 
 const merge = require('lodash.merge')
+const cloneDeep = require('lodash.clonedeep')
 
 class ChangeManager {
   constructor(start = {}) {
     this.start = start
     this.changes = {}
+    this.finals = {}
     this.actions = {}
+    this.errors = {}
     this.bindings = {
       callbacks: [],
       children: {},
@@ -14,12 +17,69 @@ class ChangeManager {
 
   commit() {
     merge(this.start, this.changes)
+    merge(this.finals, this.changes)
     this.changes = {}
     this.actions = {}
+    this.finals = {}
+    this.errors = {}
+  }
+
+  initialize(data = {}) {
+    this.start = data
+    this.finals = cloneDeep(data)
   }
 
   isDirty() {
     return Object.keys(this.changes).length
+  }
+
+  getErrors(path) {
+    let i = 0
+    let { errors } = this
+    while (i < path.length && errors) {
+      const isEnd = i === path.length - 1
+      const node = path[i++]
+      const key = node.item ? node.i : node.key
+      if (isEnd) {
+        return errors[key]
+      } else {
+        errors = errors[key]
+      }
+    }
+  }
+
+  setErrors(path, array) {
+    let i = 0
+    let { errors } = this
+    while (i < path.length) {
+      const isEnd = i === path.length - 1
+      const node = path[i++]
+      const key = node.item ? node.i : node.key
+      if (isEnd) {
+        errors[key] = array
+      } else {
+        errors = errors[key] = errors[key] ?? {}
+      }
+    }
+
+    this.trigger(path)
+  }
+
+  removeErrors(path) {
+    let i = 0
+    let { errors } = this
+    while (i < path.length) {
+      const isEnd = i === path.length - 1
+      const node = path[i++]
+      const key = node.item ? node.i : node.key
+      if (isEnd) {
+        delete errors[key]
+      } else {
+        errors = errors[key] = errors[key] ?? {}
+      }
+    }
+
+    this.trigger(path)
   }
 
   set(path, value) {
@@ -42,14 +102,7 @@ class ChangeManager {
   }
 
   get(path) {
-    const change = this.getChange(path)
-
-    if (typeof change !== 'undefined') {
-      return change
-    }
-
-    const start = this.getStart(path)
-    return start
+    return this.getFinal(path)
   }
 
   remove(path) {
@@ -157,6 +210,17 @@ class ChangeManager {
     return value
   }
 
+  getFinal(path) {
+    let i = 0
+    let finals = this.finals
+    while (i < path.length) {
+      const node = path[i++]
+      const key = node.item ? node.i : node.key
+      finals = finals?.[key]
+    }
+    return finals
+  }
+
   getChange(path) {
     let i = 0
     let changes = this.changes
@@ -205,20 +269,29 @@ class ChangeManager {
   setChange(path, value) {
     let i = 0
     let changes = this.changes
+    let finals = this.finals
     while (i < path.length) {
       const isEnd = i === path.length - 1
       const node = path[i++]
       const key = node.item ? node.i : node.key
       if (isEnd) {
         changes[key] = value
+        finals[key] = value
       } else {
         if (!changes[key]) {
-          const child = node.list
+          const childChange = node.list
             ? []
             : {}
-          changes[key] = child
+          changes[key] = childChange
+        }
+        if (!finals[key]) {
+          const childFinal = node.list
+            ? []
+            : {}
+          finals[key] = childFinal
         }
         changes = changes[key]
+        finals = finals[key]
       }
     }
     return changes
