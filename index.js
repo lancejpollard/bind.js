@@ -1,109 +1,228 @@
 
-class Access {
-  constructor(json = {}) {
-    this.value = json
-    this.bindings = {}
+const merge = require('lodash.merge')
+
+class ChangeManager {
+  constructor(start = {}) {
+    this.start = start
+    this.changes = {}
+    this.actions = {}
+    this.bindings = {
+      callbacks: [],
+      children: {},
+    }
+  }
+
+  commit() {
+    merge(this.start, this.changes)
+    this.changes = {}
+    this.actions = {}
+  }
+
+  isDirty() {
+    return Object.keys(this.changes).length
+  }
+
+  set(path, value) {
+    const start = this.getStart(path)
+    const change = this.getChange(path)
+
+    if (typeof change !== 'undefined') {
+      if (typeof start !== 'undefined') {
+        if (start === value) {
+          this.removeChange(path)
+          this.trigger(path)
+          return
+        }
+      }
+    }
+
+    this.setAction(path, 'set')
+    this.setChange(path, value)
+    this.trigger(path)
   }
 
   get(path) {
-    let i = 0
-    let node = path[i]
-    let v = this.value
-    while (v && typeof v === 'object' && node) {
-      const key = node.item ? node.i : node.key
-      v = v[key]
-      i++
-      node = path[i]
+    const change = this.getChange(path)
+
+    if (typeof change !== 'undefined') {
+      return change
     }
-    return v
+
+    const start = this.getStart(path)
+    return start
   }
 
-  set(path, x) {
+  remove(path) {
+    const start = this.getStart(path)
+    const change = this.getChange(path)
+
+    if (typeof change !== 'undefined') {
+      if (typeof start !== 'undefined') {
+        this.setChange(path, null)
+        this.setAction(path, 'remove')
+      } else {
+        this.removeChange(path)
+        this.removeAction(path)
+      }
+    } else if (typeof start !== 'undefined') {
+      this.setChange(path, null)
+      this.setAction(path, 'remove')
+    }
+
+    this.trigger(path)
+  }
+
+  removeAction(path) {
     let i = 0
-    let node = path[i]
-    let v = this.value
-    let z = this.bindings
-    while (node) {
+    let action = this
+    while (i < path.length) {
       const isEnd = i === path.length - 1
+      const node = path[i++]
       const key = node.item ? node.i : node.key
-      const child = isEnd
-        ? x
-        : node.list
-          ? []
-          : {}
       if (isEnd) {
-        if (v[key] === child) {
-          z = undefined
-        } else {
-          if (typeof child === 'undefined') {
-            if (node.item) {
-              v.splice(key, 1)
-            } else {
-              delete v[key]
-            }
-          } else {
-            v = v[key] = child
-          }
-          if (z && z[key]) {
-            const { callbacks } = z[key]
-            callbacks.forEach(call => call())
-          }
-          return
-        }
+        delete action?.actions[key]
       } else {
-        v = v[key] = v[key] || child
-        if (z && z[key]) {
-          z = z[key].children
-        }
+        action = action?.actions[key]
       }
-      i++
-      node = path[i]
     }
-    return v
   }
 
-  bind(path, call) {
+  removeChange(path) {
     let i = 0
-    let node = path[i]
-    let z = this.bindings
-    while (node) {
+    let changes = this.changes
+    while (i < path.length) {
       const isEnd = i === path.length - 1
+      const node = path[i++]
       const key = node.item ? node.i : node.key
-      const child = node.list ? [] : {}
-      const binding = z[key] = z[key] || { children: child, callbacks: [] }
       if (isEnd) {
-        binding.callbacks.push(call)
+        if (node.item) {
+          changes?.splice(key, 1)
+        } else {
+          delete changes?.[key]
+        }
       } else {
-        z = binding.children
+        changes = changes?.[key]
       }
-      i++
-      node = path[i]
     }
   }
 
-  unbind(path, call) {
+  bind(path, callback) {
+    let i = 0
+    let { bindings } = this
+    while (i < path.length) {
+      const node = path[i++]
+      const key = node.item ? node.i : node.key
+      bindings = bindings.children[key] = bindings.children[key] ?? {
+        children: {},
+        callbacks: []
+      }
+    }
+    bindings.callbacks.push(callback)
+    callback(this.get(path))
+  }
+
+  trigger(path) {
+    let i = 0
+    let { bindings } = this
+    while (i < path.length && bindings) {
+      const node = path[i++]
+      const key = node.item ? node.i : node.key
+      bindings = bindings.children[key]
+    }
+
+    const value = this.get(path)
+    bindings?.callbacks.forEach(callback => callback(value))
+  }
+
+  unbind(path, callback) {
+    let i = 0
+    let { bindings } = this
+    while (i < path.length && bindings) {
+      const node = path[i++]
+      const key = node.item ? node.i : node.key
+      bindings = bindings.children[key]
+    }
+    const index = bindings.callbacks.indexOf(callback)
+    bindings.callbacks.splice(index, 1)
+  }
+
+  getStart(path) {
+    let i = 0
+    let value = this.start
+    while (i < path.length) {
+      const node = path[i++]
+      const key = node.item ? node.i : node.key
+      value = value?.[key]
+    }
+    return value
+  }
+
+  getChange(path) {
+    let i = 0
+    let changes = this.changes
+    while (i < path.length) {
+      const node = path[i++]
+      const key = node.item ? node.i : node.key
+      changes = changes?.[key]
+    }
+    return changes
+  }
+
+  getAction(path) {
     let i = 0
     let node = path[i]
-    let z = this.bindings
-    while (node) {
-      const isEnd = i === path.length - 1
+    let action = this
+    while (node && action) {
       const key = node.item ? node.i : node.key
-      const binding = z[key]
-      if (!z[key]) {
-        return
-      } else {
-        if (isEnd) {
-          const index = binding.callbacks.indexOf(call)
-          binding.callbacks.splice(index, 1)
-          return
-        } else {
-          z = binding.children
-        }
-      }
+      action = action.actions[key]
       i++
       node = path[i]
     }
+    return action?.type
+  }
+
+  setAction(path, type) {
+    let i = 0
+    let action = this
+    while (i < path.length) {
+      const isEnd = i === path.length - 1
+      const node = path[i++]
+      const key = node.item ? node.i : node.key
+      if (isEnd) {
+        action = action.actions[key] = action.actions[key] ?? {
+          actions: {},
+        }
+        action.type = type
+      } else {
+        action = action.actions[key] = action.actions[key] ?? {
+          actions: {},
+          type: 'set',
+        }
+      }
+    }
+  }
+
+  setChange(path, value) {
+    let i = 0
+    let changes = this.changes
+    while (i < path.length) {
+      const isEnd = i === path.length - 1
+      const node = path[i++]
+      const key = node.item ? node.i : node.key
+      if (isEnd) {
+        changes[key] = value
+      } else {
+        if (!changes[key]) {
+          const child = node.list
+            ? []
+            : {}
+          changes[key] = child
+        }
+        changes = changes[key]
+      }
+    }
+    return changes
   }
 }
 
-module.exports = Access
+module.exports = ChangeManager
