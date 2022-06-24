@@ -1,7 +1,13 @@
 {
   "name": "@lancejpollard/bind.js",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "dependencies": {
     "lodash.merge": "^4.6.2"
+  },
+  "homepage": "https://github.com/lancejpollard/bind.js",
+  "author": "lp@elk.fm",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lancejpollard/bind.js.git"
   }
 }
